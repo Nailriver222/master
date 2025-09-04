@@ -6,10 +6,11 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import moviepy.editor as mp
 from scipy.signal import correlate
+from scipy.stats import pearsonr
 
 # === パラメータ ===
 SEARCH_DIR = 'C:\\Users\\nailr\北大\研究室\研究\修士\ステージ照明\\target_movie\\2017'
-OUTPUT_BASE_DIR = 'C:\\Users\\nailr\北大\研究室\研究\修士\ステージ照明\\output_features\\avgonly\\2017'
+OUTPUT_BASE_DIR = 'C:\\Users\\nailr\北大\研究室\研究\修士\ステージ照明\\output_features\\corr\\2017'
 AUDIO_TEMP_WAV = 'temp_audio.wav'
 os.makedirs(OUTPUT_BASE_DIR, exist_ok=True)
 
@@ -115,16 +116,80 @@ def align_feature_lengths(feature_dict):
     return aligned
 
 # === 相互相関とラグ検出 ===
-def compute_cross_correlation(x, y, sr):
+def compute_cross_correlation(x, y, sr, max_lag_sec=1.0):
     x = (x - np.mean(x)) / (np.std(x) + 1e-8)
     y = (y - np.mean(y)) / (np.std(y) + 1e-8)
     corr = correlate(x, y, mode='full')
     lags = np.arange(-len(y) + 1, len(x))
     corr /= len(x)
-    max_idx = np.argmax(np.abs(corr))
-    max_lag = lags[max_idx]
-    lag_time = max_lag / sr
+    
+    # 秒単位に変換したラグ
+    lag_times = lags / sr
+
+    # ±1秒以内の範囲をマスク
+    valid_idx = np.where(np.abs(lag_times) <= max_lag_sec)[0]
+
+    # 制限範囲内でのピーク検出
+    restricted_corr = corr[valid_idx]
+    restricted_lags = lags[valid_idx]
+    restricted_lag_times = lag_times[valid_idx]
+
+    max_idx = np.argmax(np.abs(restricted_corr))
+    max_lag = restricted_lags[max_idx]
+    lag_time = restricted_lag_times[max_idx]
+
     return corr, lags, max_lag, lag_time
+
+def compute_normalized_cross_correlation(x, y, sr, max_lag_sec=1.0):
+    """
+    正規化された相互相関係数を計算。
+    ラグは ±max_lag_sec の範囲内で最大値を検出。
+
+    Parameters:
+        x, y : np.ndarray
+            中心化された信号（平均0）
+        sr : float
+            サンプリングレート（秒あたりのフレーム数）
+        max_lag_sec : float
+            ピークを探すラグの最大秒数（±）
+
+    Returns:
+        max_r : float
+            最大の正規化相互相関係数（±1の範囲）
+        best_lag_sec : float
+            そのときのラグ（秒）
+        corr : np.ndarray
+            全体の相互相関配列（正規化前）
+        lags : np.ndarray
+            ラグ（フレーム単位）
+    """
+    # 中心化（平均を引く）
+    x = x - np.mean(x)
+    y = y - np.mean(y)
+
+    # 相互相関（フルモード）
+    corr = correlate(x, y, mode='full')
+    lags = np.arange(-len(y)+1, len(x))
+
+    # 正規化の分母（自己相関のラグ0）
+    norm_factor = np.sqrt(np.sum(x**2) * np.sum(y**2))
+    norm_corr = corr / (norm_factor + 1e-8)
+
+    # 秒単位のラグを取得
+    lag_times = lags / sr
+
+    # ±max_lag_sec の範囲内を抽出
+    valid_idx = np.where(np.abs(lag_times) <= max_lag_sec)[0]
+    restricted_corr = norm_corr[valid_idx]
+    restricted_lags = lag_times[valid_idx]
+
+    # 最大の相関係数とそのラグ
+    max_idx = np.argmax(np.abs(restricted_corr))
+    max_r = restricted_corr[max_idx]
+    best_lag_sec = restricted_lags[max_idx]
+
+    return max_r, best_lag_sec, norm_corr, lag_times
+
 
 # === メイン処理 ===
 def main():
@@ -176,7 +241,7 @@ def main():
             min_len = min(len(av), len(vv))
             x = av[:min_len]
             y = vv[:min_len]
-            corr, lags, max_lag, lag_time = compute_cross_correlation(x, y, 1 / time_resolution)
+            corr, lags, max_lag, lag_time = compute_cross_correlation(x, y, 1 / time_resolution, max_lag_sec=1.0)
             rms_corr = np.sqrt(np.mean(corr**2))
             results.append((ak, vk, np.max(np.abs(corr)), lag_time, rms_corr))
 
@@ -202,6 +267,32 @@ def main():
     ])
     result_df.to_csv(os.path.join(output_dir, 'cross_correlation_results.csv'), index=False)
     print(f"\n💾 相互相関の結果をCSVに保存しました: {os.path.join(output_dir, 'cross_correlation_results.csv')}")
+
+
+    print("📐 ピアソン相関係数の計算中...")
+    norm_corr_results = []
+
+    for ak, av in audio_stats.items():
+        for vk, vv in video_stats.items():
+            min_len = min(len(av), len(vv))
+            x = av[:min_len]
+            y = vv[:min_len]
+            r_norm, lag_sec, norm_corr, lag_times = compute_normalized_cross_correlation(
+                x, y, sr=1 / time_resolution, max_lag_sec=1.0
+            )
+            norm_corr_results.append((ak, vk, r_norm))
+
+    # 結果表示と保存
+    print("\n=== ピアソン相関係数の結果 ===")
+    for ak, vk, r_norm in norm_corr_results:
+        print(f"{ak} × {vk} → r = {r_norm:.4f}")
+
+    norm_df = pd.DataFrame(norm_corr_results, columns=[
+        'Audio Feature', 'Video Feature', 'Pearson r'
+    ])
+    norm_df.to_csv(os.path.join(output_dir, 'pearson_correlation.csv'), index=False)
+    print(f"\n💾 ピアソン相関係数の結果を保存しました。")
+
 
 
     if os.path.exists(wav_path):
