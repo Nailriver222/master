@@ -52,7 +52,7 @@ def extract_audio_from_video(video_path, output_wav='temp_audio.wav'):
     return output_wav
 
 # === 音響特徴量抽出 ===
-""" def extract_audio_features_from_wav(wav_path, sr=22050):
+def extract_audio_features_from_wav(wav_path, sr=22050):
     y, _ = librosa.load(wav_path, sr=sr)
     rms = librosa.feature.rms(y=y, frame_length=FRAME_LENGTH, hop_length=HOP_LENGTH)[0]
     centroid = librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=HOP_LENGTH)[0]
@@ -66,36 +66,8 @@ def extract_audio_from_video(video_path, output_wav='temp_audio.wav'):
         'bandwidth': bandwidth,
         'rolloff': rolloff,
         'flux': flux
-    }"""
-def extract_audio_features_resampled(wav_path, sr, video_fps, video_duration=None):
-    import numpy as np
-    from scipy.interpolate import interp1d
-
-    y, _ = librosa.load(wav_path, sr=sr)
-
-    # 音響特徴量
-    features = {
-        'rms': librosa.feature.rms(y=y, frame_length=FRAME_LENGTH, hop_length=HOP_LENGTH)[0],
-        'centroid': librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=HOP_LENGTH)[0],
-        'bandwidth': librosa.feature.spectral_bandwidth(y=y, sr=sr, hop_length=HOP_LENGTH)[0],
-        'rolloff': librosa.feature.spectral_rolloff(y=y, sr=sr, hop_length=HOP_LENGTH)[0],
-        'flux': np.sqrt(np.sum(np.diff(np.abs(librosa.stft(y, hop_length=HOP_LENGTH)), axis=1)**2, axis=0))
     }
 
-    # 映像フレームに対応する時間軸
-    if video_duration is None:
-        video_duration = librosa.get_duration(y=y, sr=sr)
-    num_video_frames = int(np.floor(video_duration * video_fps))
-    video_times = np.arange(num_video_frames) / video_fps
-
-    # 各特徴量をvideo_timesに補間
-    resampled = {}
-    for name, values in features.items():
-        audio_times = np.arange(len(values)) * HOP_LENGTH / sr
-        interp = interp1d(audio_times, values, kind='linear', fill_value="extrapolate")
-        resampled[name] = interp(video_times)
-
-    return resampled
 
 # === 映像特徴量抽出（平均HSV） ===
 def extract_video_features(video_path, frame_interval=1):
@@ -146,12 +118,6 @@ def main():
     user_input = input("検索する動画ファイル名の一部を入力してください: ")
     video_path, output_dir = find_and_create_output_folder(user_input.strip())
 
-    cap = cv2.VideoCapture(video_path)
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-    video_duration = frame_count / fps
-    cap.release()
-
     if video_path is None:
         print("❌ 対象ファイルが見つからなかったため、処理を終了します。")
         return
@@ -160,7 +126,7 @@ def main():
     wav_path = extract_audio_from_video(video_path, AUDIO_TEMP_WAV)
 
     print("📈 音響特徴量抽出中...")
-    audio_features = extract_audio_features_resampled(wav_path, sr=AUDIO_SR, video_fps=fps, video_duration=video_duration)
+    audio_features = extract_audio_features_from_wav(wav_path, sr=22050)
 
     print("🎥 映像特徴量抽出中...")
     video_features = extract_video_features(video_path, frame_interval=FRAME_INTERVAL)
