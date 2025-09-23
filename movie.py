@@ -8,7 +8,14 @@ import subprocess
 SEARCH_BASE = 'C:/Users/nailr/北大/研究室/研究/修士/ステージ照明'
 MOVIE_DIR = os.path.join(SEARCH_BASE, 'target_movie/2018')
 OUTPUT_DIR = os.path.join(SEARCH_BASE, 'output_features/pearson/2018')
-INPUT_IMAGE = 'center.bmp'  # 色相ベース画像（プロジェクト内に配置）
+
+# 色相変換に使う3枚の画像パスを絶対パスで指定してください
+INPUT_IMAGES = [
+    'img\\left.bmp',
+    'img\\center.bmp',
+    'img\\right.bmp',
+]
+
 FEATURE_COLUMN = 'rms_mean'
 FPS = 25  # 元動画と合わせて
 TEMP_VIDEO_NAME = 'temp_no_audio.mp4'
@@ -52,23 +59,37 @@ feature_norm = (feature_log - np.min(feature_log)) / (np.max(feature_log) - np.m
 # Hueに変換（0〜179）
 hue_values = (feature_norm * 179).astype(np.uint8)
 
-# === 入力画像からフレーム作成 ===
-image = cv2.imread(INPUT_IMAGE)
-if image is None:
-    print(f"❌ 入力画像が見つかりません: {INPUT_IMAGE}")
-    exit()
+# === 3枚の画像を読み込み（リサイズなし） ===
+imgs = []
+for path in INPUT_IMAGES:
+    img = cv2.imread(path)
+    if img is None:
+        print(f"❌ 入力画像が見つかりません: {path}")
+        exit()
+    imgs.append(img.astype(np.float32) / 255.0)
 
-hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-height, width, _ = image.shape
+# 動画サイズは最初の画像のサイズに合わせる
+height, width, _ = imgs[0].shape
+
+# === 動画書き込み準備 ===
 temp_video_path = os.path.join(feature_folder, TEMP_VIDEO_NAME)
 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 video_writer = cv2.VideoWriter(temp_video_path, fourcc, FPS, (width, height))
 
+def hue_shift(img, hue_val):
+    # imgは0〜1 float32 BGR画像
+    hsv = cv2.cvtColor((img * 255).astype(np.uint8), cv2.COLOR_BGR2HSV)
+    hsv[:, :, 0] = hue_val
+    bgr_shifted = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR).astype(np.float32) / 255.0
+    return bgr_shifted
+
+# === フレームごとに色相変換＆乗算合成して動画に書き込む ===
 for hue in hue_values:
-    hsv = hsv_image.copy()
-    hsv[:, :, 0] = hue
-    bgr_frame = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
-    video_writer.write(bgr_frame)
+    shifted_imgs = [hue_shift(img, hue) for img in imgs]
+    combined = shifted_imgs[0] + shifted_imgs[1] + shifted_imgs[2]
+    combined = np.clip(combined, 0, 1)
+    frame = (combined * 255).astype(np.uint8)
+    video_writer.write(frame)
 
 video_writer.release()
 print(f"🎥 無音動画を保存: {temp_video_path}")
@@ -93,7 +114,7 @@ subprocess.run(ffmpeg_command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVN
 
 print(f"✅ 最終動画を保存: {final_output_path}")
 
-# === 不要な一時ファイルを削除 ===
+# === 一時動画ファイルを削除 ===
 if os.path.exists(temp_video_path):
     os.remove(temp_video_path)
     print(f"🗑️ 一時ファイルを削除: {temp_video_path}")
