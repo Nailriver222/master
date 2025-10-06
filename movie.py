@@ -7,7 +7,8 @@ import subprocess
 # === 設定 ===
 SEARCH_BASE = 'C:/Users/nailr/北大/研究室/研究/修士/ステージ照明'
 MOVIE_DIR = os.path.join(SEARCH_BASE, 'target_movie/2018')
-OUTPUT_DIR = os.path.join(SEARCH_BASE, 'output_features/pearson/2018')
+FEATURE_CSV_DIR = os.path.join(SEARCH_BASE, 'output_features/pearson/2018')
+OUTPUT_VIDEO_DIR = os.path.join(SEARCH_BASE, 'generated_videos/2018')
 
 # 色相変換に使う3枚の画像パスを絶対パスで指定してください
 INPUT_IMAGES = [
@@ -16,7 +17,14 @@ INPUT_IMAGES = [
     'img\\right.bmp',
 ]
 
-FEATURE_COLUMN = 'rms_mean'
+# 各画像に使う特徴量と適用するHSV成分を指定
+# 'H' = 色相, 'S' = 彩度, 'V' = 明度
+IMAGE_FEATURE_SETTINGS = [
+    {'feature': 'rms_mean', 'component': 'H'},
+    {'feature': 'flux_mean', 'component': 'H'},
+    {'feature': 'rms_mean', 'component': 'H'},
+]
+
 FPS = 25  # 元動画と合わせて
 TEMP_VIDEO_NAME = 'temp_no_audio.mp4'
 FINAL_VIDEO_NAME = 'final_output.mp4'
@@ -29,13 +37,15 @@ def find_target_video_and_feature_folder():
         if search_term in file and file.lower().endswith('.mp4'):
             video_path = os.path.join(MOVIE_DIR, file)
             name_no_ext = os.path.splitext(file)[0]
-            feature_folder = os.path.join(OUTPUT_DIR, name_no_ext)
-            feature_csv = os.path.join(feature_folder, 'audio_features.csv')
+            feature_csv_folder = os.path.join(FEATURE_CSV_DIR, name_no_ext)
+            feature_csv = os.path.join(feature_csv_folder, 'audio_features.csv')
+            output_video_folder = os.path.join(OUTPUT_VIDEO_DIR, name_no_ext)
             if os.path.exists(feature_csv):
-                return video_path, feature_folder, feature_csv
+                return video_path, output_video_folder, feature_csv
     return None, None, None
 
-video_path, feature_folder, feature_csv = find_target_video_and_feature_folder()
+video_path, output_video_folder, feature_csv = find_target_video_and_feature_folder()
+os.makedirs(output_video_folder, exist_ok=True)
 
 if not video_path:
     print(f"❌ 対象が見つかりませんでした: {search_term}")
@@ -46,18 +56,25 @@ print(f"✅ 特徴量CSV: {feature_csv}")
 
 # === 音響特徴量を読み込む ===
 df = pd.read_csv(feature_csv)
-if FEATURE_COLUMN not in df.columns:
-    print(f"❌ 指定の特徴量列が見つかりません: {FEATURE_COLUMN}")
-    exit()
 
-feature_raw = df[FEATURE_COLUMN].values
+# 各画像用の変換データ（255スケール）を保存
+value_sequences = []
 
-# log変換＋正規化
-feature_log = np.log1p(feature_raw)
-feature_norm = (feature_log - np.min(feature_log)) / (np.max(feature_log) - np.min(feature_log))
+for setting in IMAGE_FEATURE_SETTINGS:
+    col = setting['feature']
+    if col not in df.columns:
+        print(f"❌ 指定の特徴量列が見つかりません: {col}")
+        exit()
 
-# Hueに変換（0〜179）
-hue_values = (feature_norm * 179).astype(np.uint8)
+    raw = df[col].values
+    if len(raw) == 0:
+        print(f"❌ 特徴量列 '{col}' にデータがありません。")
+        exit()
+
+    log = np.log1p(raw)
+    norm = (log - np.min(log)) / (np.max(log) - np.min(log))
+    values = (norm * 255).astype(np.uint8)
+    value_sequences.append(values)
 
 # === 3枚の画像を読み込み（リサイズなし） ===
 imgs = []
@@ -72,30 +89,53 @@ for path in INPUT_IMAGES:
 height, width, _ = imgs[0].shape
 
 # === 動画書き込み準備 ===
-temp_video_path = os.path.join(feature_folder, TEMP_VIDEO_NAME)
+temp_video_path = os.path.join(output_video_folder, TEMP_VIDEO_NAME)
 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 video_writer = cv2.VideoWriter(temp_video_path, fourcc, FPS, (width, height))
 
-def hue_shift(img, hue_val):
-    # imgは0〜1 float32 BGR画像
+def hsv_shift(img, value, component):
+    """
+    img: 0〜1のfloat32 BGR画像
+    value: 0〜255の値（1つのスカラー）
+    component: 'H', 'S', 'V' のどれを変更するか
+    """
     hsv = cv2.cvtColor((img * 255).astype(np.uint8), cv2.COLOR_BGR2HSV)
-    hsv[:, :, 0] = hue_val
+    
+    if component == 'H':
+        hsv[:, :, 0] = np.full_like(hsv[:, :, 0], int(value))
+    elif component == 'S':
+        hsv[:, :, 1] = np.full_like(hsv[:, :, 1], int(value))
+    elif component == 'V':
+        hsv[:, :, 2] = np.full_like(hsv[:, :, 2], int(value))
+    else:
+        raise ValueError(f"Unknown component: {component}")
+    
     bgr_shifted = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR).astype(np.float32) / 255.0
     return bgr_shifted
 
-# === フレームごとに色相変換＆乗算合成して動画に書き込む ===
-for hue in hue_values:
-    shifted_imgs = [hue_shift(img, hue) for img in imgs]
-    combined = shifted_imgs[0] + shifted_imgs[1] + shifted_imgs[2]
+# === フレームごとに色相変換＆合成 ===
+frame_count = len(value_sequences[0])  # 全列が同じ長さであること前提
+
+for i in range(frame_count):
+    shifted_imgs = [
+        hsv_shift(
+            imgs[j],                 # 元画像
+            value_sequences[j][i],  # このフレームの値
+            IMAGE_FEATURE_SETTINGS[j]['component']  # 'H', 'S', 'V'
+        )
+        for j in range(3)
+    ]
+    combined = sum(shifted_imgs)
     combined = np.clip(combined, 0, 1)
     frame = (combined * 255).astype(np.uint8)
     video_writer.write(frame)
+
 
 video_writer.release()
 print(f"🎥 無音動画を保存: {temp_video_path}")
 
 # === FFmpegで音声を合成 ===
-final_output_path = os.path.join(feature_folder, FINAL_VIDEO_NAME)
+final_output_path = os.path.join(output_video_folder, FINAL_VIDEO_NAME)
 
 ffmpeg_command = [
     'ffmpeg',
