@@ -10,7 +10,7 @@ from scipy.stats import pearsonr
 
 # === パラメータ ===
 SEARCH_DIR = 'C:\\Users\\nailr\北大\研究室\研究\修士\ステージ照明\\target_movie\\2018'
-OUTPUT_BASE_DIR = 'C:\\Users\\nailr\北大\研究室\研究\修士\ステージ照明\\output_features\\pearson\\2018'
+OUTPUT_BASE_DIR = 'C:\\Users\\nailr\北大\研究室\研究\修士\ステージ照明\\output\\output_features\\pearson\\2018'
 AUDIO_TEMP_WAV = 'temp_audio.wav'
 os.makedirs(OUTPUT_BASE_DIR, exist_ok=True)
 
