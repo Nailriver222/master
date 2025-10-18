@@ -7,7 +7,7 @@ import subprocess
 # === 設定 ===
 SEARCH_BASE = 'C:/Users/nailr/北大/研究室/研究/修士/ステージ照明'
 MOVIE_DIR = os.path.join(SEARCH_BASE, 'target_movie/2018')
-FEATURE_CSV_DIR = os.path.join(SEARCH_BASE, 'output/output_features/pearson/2018')
+FEATURE_CSV_DIR = 'C:\\Users\\nailr\\VScode Projects\\master\\output\\output_features\\pearson\\2018'
 OUTPUT_VIDEO_DIR = os.path.join(SEARCH_BASE, 'generated_videos/2018')
 
 # 色相変換に使う3枚の画像パスを絶対パスで指定してください

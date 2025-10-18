@@ -14,7 +14,7 @@ image_files = [
 ]
 
 # 出力フォルダを指定
-output_folder = 'C:\\Users\\nailr\北大\研究室\研究\修士\ステージ照明\\output\\output_rgb'
+output_folder = 'C:\\Users\\nailr\\VScode Projects\\master\\output\\output_rgb'
 # ============================================
 
 def load_grayscale_image(path):
