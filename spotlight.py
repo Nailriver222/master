@@ -15,14 +15,25 @@ image_files = [
 
 # 出力フォルダを指定
 output_folder = 'C:\\Users\\nailr\\VScode Projects\\master\\output\\output_rgb'
+
+# 色指定モード
+use_random_color = False  # ← True にすればランダムカラー
+
+# ランダムでない場合に使う色（RGBタプル）
+# image_filesと同じ順番で設定
+specified_colors = [
+    (255, 0, 0), 
+    (255, 0, 0), 
+    (255, 0, 0), 
+]
 # ============================================
+
 
 def load_grayscale_image(path):
     return Image.open(path).convert('L')
 
-def create_random_color_image(size):
-    color = tuple(random.randint(0, 255) for _ in range(3))
-    return Image.new('RGB', size, color), color
+def create_color_image(size, color):
+    return Image.new('RGB', size, color)
 
 def multiply_images(gray_img, color_img):
     gray_np = np.array(gray_img) / 255.0
@@ -42,13 +53,20 @@ def add_all_images_hdr(image_list):
 def ensure_output_dir(path):
     os.makedirs(path, exist_ok=True)
 
+def get_color(index):
+    if use_random_color:
+        return tuple(random.randint(0, 255) for _ in range(3))
+    else:
+        return specified_colors[index]
+
 def process_images(image_paths, output_dir):
     ensure_output_dir(output_dir)
     colored_images = []
 
     for i, path in enumerate(image_paths):
         gray_img = load_grayscale_image(path)
-        color_img, color = create_random_color_image(gray_img.size)
+        color = get_color(i)
+        color_img = create_color_image(gray_img.size, color)
 
         print(f"Processing: {path} with color {color}")
         colored_img = multiply_images(gray_img, color_img)
