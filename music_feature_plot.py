@@ -249,7 +249,7 @@ def main():
             plt.figure(figsize=(8, 4))
             plt.plot(lags * time_resolution, corr)
             plt.title(f'Cross-Correlation: {ak} vs {vk}')
-            plt.xlabel('Lag (seconds)')
+            plt.xlabel('Lag (frames)')
             plt.ylabel('Correlation')
             plt.grid()
             plt.tight_layout()
