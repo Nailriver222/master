@@ -6,6 +6,8 @@ import cv2
 from skimage.measure import shannon_entropy
 import pandas as pd
 import csv
+import matplotlib.pyplot as plt
+
 
 # ======== ユーザー設定 ========
 image_files = [
@@ -62,7 +64,7 @@ def get_color(index):
     if use_random_color:
         return tuple(random.randint(0, 255) for _ in range(3))
     else:
-        return specified_colors
+        return specified_colors[index % len(specified_colors)]
 
 def process_images(image_paths):
     colored_images = []
@@ -89,10 +91,26 @@ def calculate_hue_entropy(image_path, hue_bins=180):
 
     # 色相エントロピー
     img_hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-    hue_channel = img_hsv[:, :, 0]
-    hist, _ = np.histogram(hue_channel, bins=hue_bins, range=(0,180), density=True)
+    h, s, v = cv2.split(img_hsv)
+    sat_thresh = 0
+    val_thresh = 0
+    valid_mask = (s > sat_thresh) & (v > val_thresh)
+    hue_valid = h[valid_mask]
+    if hue_valid.size == 0:
+        raise ValueError("有効なHueを持つピクセルが見つかりません。")
+    
+    hist, bins = np.histogram(hue_valid, bins=hue_bins, range=(0, 180), density=True)
     hist_nonzero = hist[hist > 0]
     hue_entropy = -np.sum(hist_nonzero * np.log2(hist_nonzero))
+
+    # === ヒストグラム表示 ===
+    plt.figure(figsize=(10, 5))
+    plt.bar(bins[:-1], hist, width=1, color='orange', edgecolor='black')
+    plt.title("Hue Histogram (excluding black/gray/white)")
+    plt.xlabel("Hue value (0–179)")
+    plt.ylabel("Normalized Frequency")
+    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.show()
     return entropy_gray, hue_entropy
 
 # ----------- O1計算 -----------
@@ -135,6 +153,34 @@ def optimize_images(num_cycles=10):
             # エントロピー計算
             entropy_gray, hue_entropy = calculate_hue_entropy(temp_image_path)
 
+            # 毎サイクルでHue可視化
+            def visualize_hue_excluding_black(image_path, sat_thresh=30, val_thresh=30):
+                img_bgr = cv2.imread(image_path)
+                if img_bgr is None:
+                    raise FileNotFoundError(f"画像が見つかりません: {image_path}")
+
+                img_hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+                h, s, v = cv2.split(img_hsv)
+
+                valid_mask = (s > sat_thresh) & (v > val_thresh)
+
+                hsv_vis = np.zeros_like(img_hsv)
+                hsv_vis[:, :, 0] = h
+                hsv_vis[:, :, 1] = 255
+                hsv_vis[:, :, 2] = 255
+                hsv_vis[~valid_mask] = [0, 0, 0]
+
+                bgr_vis = cv2.cvtColor(hsv_vis, cv2.COLOR_HSV2BGR)
+                rgb_vis = cv2.cvtColor(bgr_vis, cv2.COLOR_BGR2RGB)
+
+                plt.figure(figsize=(6, 6))
+                plt.imshow(rgb_vis)
+                plt.title(f"Hue Visualization - Cycle {cycle}")
+                plt.axis("off")
+                plt.show()
+
+            visualize_hue_excluding_black(temp_image_path)
+
             # O1計算
             O1 = calculate_O1(audio_csv_path, video_csv_path, audio_column, video_column)
 
@@ -172,9 +218,9 @@ def optimize_images(num_cycles=10):
 
 # ======== 実行 ========
 if __name__ == "__main__":
-    best_gray, best_hue = optimize_images(num_cycles=5)
-    
-    print("\n====== 最終結果（見やすく整理） ======")
+    best_gray, best_hue = optimize_images(num_cycles=20)
+
+    print("\n====== 最終結果 ======")
     print("■ 輝度基準最小Cost")
     print(f"Cycle: {best_gray['cycle']}")
     print(f"RGB値: {best_gray['RGB_values']}")
